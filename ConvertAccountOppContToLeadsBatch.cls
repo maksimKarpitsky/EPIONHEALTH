@@ -7,9 +7,9 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
 
-
-    global void execute(Database.BatchableContext bc, List<Account> scope) {
-
+    }
+    global void execute(Database.BatchableContext bc, List<SObject> bc) {
+    }
     global void finish(Database.BatchableContext bc) {
-
+    }
 }
