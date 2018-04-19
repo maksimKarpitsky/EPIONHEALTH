@@ -14,7 +14,6 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
             'Phone' => 'Phone',
             'OwnerId' => 'OwnerId',
             'AccountSource' => 'LeadSource',
-            'BillingAddress' => 'Address',
             'BillingCity' => 'City',
             'BillingCountry' => 'Country',
             'BillingCountryCode' => 'CountryCode',
@@ -26,7 +25,7 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
             'BillingStreet' => 'Street',
             'Website' => 'Website',
             'EMR_ID__c' => 'EMR_ID__c',
-            'EMR_Type__c' => 'EMR_Company__c',
+            'EMR_Company__c' => 'EMR_Type__c',
             'Fax' => 'Fax',
             'Industry' => 'Industry',
             'Provider_Potential__c' => 'Provider_Potential__c',
@@ -34,8 +33,12 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
             'Specialties__c' => 'Specialty__c'
     };
 
-    global Database.QueryLocator start(Database.BatchableContext bc) {
+    public ConvertAccountOppContToLeadsBatch() {
         globalUserId = [SELECT Id FROM User WHERE Name = 'Max Tyroler' LIMIT 1].Id;
+    }
+
+    global Database.QueryLocator start(Database.BatchableContext bc) {
+
         List<String> fieldsList = new List<String>(accountToLeadMap.keySet());
         String fields = String.join(fieldsList, ', ');
 
@@ -99,15 +102,19 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
                         Boolean isMoveToLead = true;
                         for (Opportunity opp : acc.Opportunities) {
                             if (!(opp.StageName == 'Not Contacted' || opp.StageName == 'Attempting Contact')) {
-                                oppIds.add(opp.Id);
+
                                 isMoveToLead = false;
                                 break;
                             }
                         }
                         if (isMoveToLead) {
+                            for (Opportunity opp : acc.Opportunities) {
+                                oppIds.add(opp.Id);
+                                opportunityDeleteList.add(opp);
+                            }
+
                             Lead newLead = createNewLead(acc);
                             contactDeleteList.add(acc.Contacts.get(0));
-                            opportunityDeleteList.add(acc.Opportunities.get(0));
                             leadMap.put(acc.Id, newLead);
                             recordsProcessed++;
                         }
@@ -208,10 +215,19 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
             }
 
             List<Opportunity> opportunities = [
-                    SELECT Id, Name, StageName, (SELECT Id, WhatId, WhoId, Status, Subject, Description FROM Tasks)/*, (SELECT Id, Name, ParentId, Body, Description, IsPrivate FROM Attachments)*/
+                    SELECT Id, Name, StageName, AccountId, (SELECT Id, WhatId, WhoId, Status, Subject, Description FROM Tasks)/*, (SELECT Id, Name, ParentId, Body, Description, IsPrivate FROM Attachments)*/
                     FROM Opportunity
                     WHERE (StageName = 'Not Contacted' OR StageName = 'Attempting Contact') AND Id IN :oppIds
             ];
+
+            for (Opportunity opp : opportunities) {
+                for (Task t : opp.Tasks) {
+                    t.WhatId = null;
+                    t.WhoId = leadMap.get(opp.AccountId).Id;
+                    t.OwnerId = userIdsMap.get(opp.OwnerId);
+                }
+                tasksUpdateList.addAll(opp.Tasks);
+            }
 
             /*if (!attachmentInsertList.isEmpty()) {
                 insert attachmentInsertList;
@@ -254,7 +270,6 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
         newLead.EMR_ID__c = acc.EMR_ID__c;
         newLead.EMR_Type__c = acc.EMR_Company__c;
         newLead.Status = acc.Opportunities.get(0).StageName;
-        //newLead.Address = acc.BillingAddress;
         newLead.Latitude = acc.BillingLatitude;
         newLead.Longitude = acc.BillingLongitude;
         newLead.PostalCode = acc.BillingPostalCode;
@@ -269,11 +284,26 @@ global class ConvertAccountOppContToLeadsBatch implements Database.Batchable<sOb
         newLead.Provider_Potential__c = acc.Provider_Potential__c;
         newLead.Specialty__c = acc.Specialties__c;
         newLead.Company = acc.Name;
-        newLead.FirstName = acc.Contacts.get(0).FirstName;
-        newLead.LastName = acc.Contacts.get(0).LastName;
-        newLead.Email = acc.Contacts.get(0).Email;
-        newLead.Salutation = acc.Contacts.get(0).Salutation;
+        createNewContacts(newLead, acc.Contacts);
         return newLead;
+    }
+
+    private void createNewContacts(Lead newLead, List<Contact> cons) {
+        newLead.FirstName = cons.get(0).FirstName;
+        newLead.LastName = cons.get(0).LastName;
+        newLead.Email = cons.get(0).Email;
+        newLead.Salutation = cons.get(0).Salutation;
+        String additionalContacts = '';
+        if (cons.size() > 1) {
+            for (Integer i = 1; i <= cons.size(); i++) {
+                additionalContacts += 'Contact (' + i + '):'
+                        + ' FirstName: ' + cons.get(i).FirstName
+                        + ' LastName: ' + cons.get(i).LastName
+                        + ' Email: ' + cons.get(i).Email
+                        + ' Salutation: ' + cons.get(i).Salutation
+                        + '\n';
+            }
+        }
     }
 
     global void finish(Database.BatchableContext bc) {
